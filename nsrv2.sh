@@ -1,4 +1,4 @@
-scp root@srv1.green.skills:/etc/krb5.conf /etc/krb5.conf
+scp Administrator@srv1.green.skills:/etc/krb5.conf /etc/krb5.conf
 
 # Настроить DNS
 cat > /etc/resolv.conf << 'EOF'
