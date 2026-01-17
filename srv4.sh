@@ -1,27 +1,3 @@
-
-# Настроить pg_hba.conf для доступа
-cat >> /etc/postgresql/15/main/pg_hba.conf << 'EOF'
-
-# GitFlic access
-host    gitflic         gitflic_user    127.0.0.1/32            md5
-host    gitflic         gitflic_user    10.0.0.0/8              md5
-EOF
-
-# Настроить postgresql.conf для прослушивания на всех интерфейсах
-sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /etc/postgresql/15/main/postgresql.conf
-
-# Перезапустить PostgreSQL
-systemctl restart postgresql
-sleep 3
-# Проверить подключение
-psql -h 127.0.0.1 -U gitflic_user -d gitflic -W
-# Ввести пароль: P@ssw0rd
-# В консоли PostgreSQL:
-\l
-\q
-
-# На SRV4
-
 # Установить зависимости
 apt install -y \
     apt-transport-https \
@@ -29,7 +5,7 @@ apt install -y \
     curl \
     gnupg \
     lsb-release
-
+sleep 10
 # Добавить GPG ключ Docker
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -41,17 +17,17 @@ echo \
 
 # Обновить список пакетов
 apt update
-
+sleep 3
 # Установить Docker
 apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
+sleep 10
 # Проверить статус
 systemctl status docker
-
+sleep 3
 # Проверить версию
 docker --version
 docker compose version
-
+sleep 3
 # На SRV4
 
 # Создать директорию для GitFlic
@@ -91,19 +67,19 @@ EOF
 
 # Запустить GitFlic
 docker compose up -d
-
+sleep 3
 # Проверить статус
 docker compose ps
-
+sleep 3
 # Проверить логи
 docker compose logs -f
-
+sleep 5
 # Дождаться полного запуска (может занять несколько минут)
 # Нажать Ctrl+C для выхода из логов
 
 # Проверить доступность
 curl http://localhost:3000
-
+sleep 5
 # На SRV4
 
 # Создать конфигурацию для git.green.skills
@@ -158,34 +134,34 @@ EOF
 
 # Активировать сайт
 ln -s /etc/nginx/sites-available/gitflic /etc/nginx/sites-enabled/
-
+sleep 3
 # Проверить конфигурацию
 nginx -t
-
+sleep 5
 # Перезапустить Nginx
 systemctl reload nginx
-
+sleep 3
 # Проверить
 curl -k https://git.green.skills
-
+sleep 3
 # На SRV4
 
 # Установить Ansible
 apt update
 apt install -y ansible
-
+sleep 10
 # Проверить версию
 ansible --version
-
+sleep 3
 # На SRV4
 
 # Создать директорию для Ansible
 mkdir -p /srv/ansible
 cd /srv/ansible
-
+sleep 5
 # Создать структуру директорий
 mkdir -p {inventory,playbooks,roles,group_vars,host_vars}
-
+sleep 5
 # Создать inventory файл
 cat > inventory/hosts << 'EOF'
 [clients]
@@ -297,12 +273,12 @@ EOF
 
 # Проверить синтаксис плейбука
 ansible-playbook playbooks/configure_cli2.yml --syntax-check
-
+sleep 5
 # Проверить подключение к CLI-2
 ansible clients -m ping
-
+sleep 5
 # Запустить плейбук
 ansible-playbook playbooks/configure_cli2.yml
-
+sleep 5
 # Проверить результат
 ansible clients -m shell -a "df -h | grep Shares"
