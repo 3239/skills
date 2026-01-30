@@ -44,10 +44,19 @@ iface ens19 inet static
     address 77.34.141.141/22
     gateway 77.34.140.1
     post-up echo 1 > /proc/sys/net/ipv4/ip_forward
-    post-up ip route add 172.217.35.0/24 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 178.207.179.0/29 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 178.207.179.24/29 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 12.12.12.0/24 via 77.34.140.1 dev ens19 || true
+    post-up ip route add 172.217.35.80/24 via 77.34.140.1 dev ens19 || true
+    post-up ip route add 178.207.179.4/29 via 77.34.140.1 dev ens19 || true
+    post-up ip route add 178.207.179.28/29 via 77.34.140.1 dev ens19 || true
+    post-up ip route add 178.217.35.100/24 via 77.34.140.1 dev ens19 || true
+    post-up ip route add 12.12.12.2/24 via 77.34.140.1 dev ens19 || true
+    post-up ip route add 172.217.35.0/24 via 178.207.179.25 dev ens19 || true
+    post-up ip route add 178.207.179.0/29 via 178.207.179.25 dev ens19 || true
+    post-up ip route add 178.217.179.0/24 via 178.207.179.25 dev ens19 || true
+    post-up ip route add 12.12.12.0/24 via 178.207.179.25 dev ens19 || true
+    post-up ip route add 13.13.13.0/24 via 178.207.179.25 dev ens19 || true
+    post-up ip route add 11.11.11.0/24 via 178.207.179.25 dev ens19 || true
+    # Резервный маршрут по умолчанию с метрикой 10 (активируется при отказе основного)
+    post-up ip route add default via 178.207.179.25 dev ens19 metric 10 || true
 
 # LAN — к фаерволу c-msk-1-fw (ens18) с поддержкой VLAN
 auto ens18
