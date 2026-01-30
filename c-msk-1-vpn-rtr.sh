@@ -26,7 +26,7 @@ apt install -y \
   iproute2 iputils-ping net-tools tcpdump curl jq
 
 ### === 2. Сетевые интерфейсы через /etc/network/interfaces ===
-echo "[+] Настройка сетевых интерфейсов с поддержкой VLAN..."
+echo "[+] Настройка сетевых интерфейсов (ens18=WAN/DHCP, ens19=LAN/VLAN)..."
 
 # Загрузка модуля 8021q для работы с VLAN
 modprobe 8021q
@@ -36,51 +36,32 @@ cat > /etc/network/interfaces <<'EOF'
 # Loopback
 auto lo
 iface lo inet loopback
-    address 10.10.10.1/32
 
-# WAN — к провайдеру GOSTELECOM (ens19)
-auto ens19
-iface ens19 inet static
-    address 77.34.141.141/22
-    gateway 77.34.140.1
-    post-up echo 1 > /proc/sys/net/ipv4/ip_forward
-    post-up ip route add 172.217.35.80/24 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 178.207.179.4/29 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 178.207.179.28/29 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 178.217.35.100/24 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 12.12.12.2/24 via 77.34.140.1 dev ens19 || true
-    post-up ip route add 172.217.35.0/24 via 178.207.179.25 dev ens19 || true
-    post-up ip route add 178.207.179.0/29 via 178.207.179.25 dev ens19 || true
-    post-up ip route add 178.217.179.0/24 via 178.207.179.25 dev ens19 || true
-    post-up ip route add 12.12.12.0/24 via 178.207.179.25 dev ens19 || true
-    post-up ip route add 13.13.13.0/24 via 178.207.179.25 dev ens19 || true
-    post-up ip route add 11.11.11.0/24 via 178.207.179.25 dev ens19 || true
-    # Резервный маршрут по умолчанию с метрикой 10 (активируется при отказе основного)
-    post-up ip route add default via 178.207.179.25 dev ens19 metric 10 || true
-
-# LAN — к фаерволу c-msk-1-fw (ens18) с поддержкой VLAN
 auto ens18
-iface ens18 inet manual
+iface ens18 inet dhcp
+
+auto ens19
+iface ens19 inet manual
     up ip link set $IFACE up
     down ip link set $IFACE down
 
 # VLAN 10 — INS (Clients)
-auto ens18.10
-iface ens18.10 inet static
+auto ens19.10
+iface ens19.10 inet static
     address 10.100.10.21/24
-    vlan-raw-device ens18
+    vlan-raw-device ens19
 
 # VLAN 20 — SRV (Servers)
-auto ens18.20
-iface ens18.20 inet static
+auto ens19.20
+iface ens19.20 inet static
     address 10.100.20.21/24
-    vlan-raw-device ens18
+    vlan-raw-device ens19
 
 # VLAN 60 — MGMT
-auto ens18.60
-iface ens18.60 inet static
+auto ens19.60
+iface ens19.60 inet static
     address 10.100.60.21/24
-    vlan-raw-device ens18
+    vlan-raw-device ens19
 EOF
 
 # Применение конфигурации
@@ -97,11 +78,11 @@ net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
-net.ipv4.conf.ens19.accept_redirects = 0
 net.ipv4.conf.ens18.accept_redirects = 0
-net.ipv4.conf.ens18.10.accept_redirects = 0
-net.ipv4.conf.ens18.20.accept_redirects = 0
-net.ipv4.conf.ens18.60.accept_redirects = 0
+net.ipv4.conf.ens19.accept_redirects = 0
+net.ipv4.conf.ens19.10.accept_redirects = 0
+net.ipv4.conf.ens19.20.accept_redirects = 0
+net.ipv4.conf.ens19.60.accept_redirects = 0
 EOF
 
 sysctl -p
@@ -114,10 +95,10 @@ cat > /etc/nftables.conf <<'EOF'
 
 flush ruleset
 
-define WAN_IF = "ens19"
-define VLAN10_IF = "ens18.10"
-define VLAN20_IF = "ens18.20"
-define VLAN60_IF = "ens18.60"
+define WAN_IF = "ens18"
+define VLAN10_IF = "ens19.10"
+define VLAN20_IF = "ens19.20"
+define VLAN60_IF = "ens19.60"
 define DC1_NET = 10.200.0.0/16
 define DC2_NET = 10.201.0.0/16
 define INS_NET = 10.100.10.0/24
@@ -170,14 +151,16 @@ EOF
 systemctl enable --now nftables
 
 ### === 5. IPsec + GRE туннели (strongSwan) ===
-echo "[+] Настройка IPsec и GRE..."
+echo "[+] Настройка IPsec и GRE (адреса +1 согласно таблице провайдеров)..."
 
 # Конфигурация strongSwan
 cat > /etc/swanctl/swanctl.conf <<'EOF'
 connections {
     dc1-tunnel {
-        local_addrs = 77.34.141.141
-        remote_addrs = 172.217.35.35
+        # Локальный адрес: получаем через DHCP от провайдера
+        # Удалённый адрес: 172.217.35.81 (+1 от 172.217.35.80 из таблицы)
+        local_addrs = 77.34.141.142
+        remote_addrs = 172.217.35.81
 
         local {
             auth = psk
@@ -188,7 +171,7 @@ connections {
         children {
             dc1-child {
                 local_ts = 10.100.0.0/16
-                remote_ts = 10.120.0.0/16
+                remote_ts = 10.200.0.0/16
                 updown = /etc/swanctl/gre-updown.sh
                 esp_proposals = aes256-sha256-modp2048
                 start_action = start
@@ -201,8 +184,9 @@ connections {
     }
 
     dc2-tunnel {
-        local_addrs = 77.34.141.141
-        remote_addrs = 178.207.179.3
+        # Удалённый адрес: 178.207.179.5 (+1 от 178.207.179.4 из таблицы)
+        local_addrs = 77.34.141.142
+        remote_addrs = 178.207.179.5
 
         local {
             auth = psk
@@ -213,7 +197,7 @@ connections {
         children {
             dc2-child {
                 local_ts = 10.100.0.0/16
-                remote_ts = 10.120.0.0/16
+                remote_ts = 10.201.0.0/16
                 updown = /etc/swanctl/gre-updown.sh
                 esp_proposals = aes256-sha256-modp2048
                 start_action = start
@@ -227,10 +211,10 @@ connections {
 }
 
 secrets {
-    ike-172.217.35.35 {
+    ike-172.217.35.81 {
         secret = P@ssw0rdVPN
     }
-    ike-178.207.179.3 {
+    ike-178.207.179.5 {
         secret = P@ssw0rdVPN
     }
 }
@@ -241,15 +225,18 @@ cat > /etc/swanctl/gre-updown.sh <<'EOF'
 #!/bin/bash
 set -e
 
+# Определяем локальный адрес из интерфейса ens18 (WAN)
+LOCAL_IP=$(ip -4 addr show ens18 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+
 case "${PLUTO_PEER}" in
-    172.217.35.35) TUN_NUM=101; REMOTE_IP="172.217.35.35" ;;
-    178.207.179.3) TUN_NUM=102; REMOTE_IP="178.207.179.3" ;;
+    172.217.35.81) TUN_NUM=101; REMOTE_IP="172.217.35.81" ;;
+    178.207.179.5) TUN_NUM=102; REMOTE_IP="178.207.179.5" ;;
     *) exit 0 ;;
 esac
 
 case "${PLUTO_VERB}" in
     up-client)
-        ip tunnel add gre${TUN_NUM} mode gre local 77.34.141.141 remote ${REMOTE_IP} ttl 255 2>/dev/null || true
+        ip tunnel add gre${TUN_NUM} mode gre local ${LOCAL_IP} remote ${REMOTE_IP} ttl 255 2>/dev/null || true
         ip addr add 10.10.${TUN_NUM}.1/30 dev gre${TUN_NUM} 2>/dev/null || true
         ip link set gre${TUN_NUM} mtu 1400
         ip link set gre${TUN_NUM} up
@@ -296,15 +283,15 @@ interface gre102
  ip ospf network point-to-point
  ip pim sparse-mode
 !
-interface ens18.10
+interface ens19.10
  ip address 10.100.10.21/24
  ip ospf network broadcast
 !
-interface ens18.20
+interface ens19.20
  ip address 10.100.20.21/24
  ip ospf network broadcast
 !
-interface ens18.60
+interface ens19.60
  ip address 10.100.60.21/24
  ip ospf network broadcast
 !
@@ -317,9 +304,9 @@ router ospf
  network 10.100.20.0/24 area 0.0.0.0
  network 10.100.60.0/24 area 0.0.0.0
  passive-interface default
- no passive-interface ens18.10
- no passive-interface ens18.20
- no passive-interface ens18.60
+ no passive-interface ens19.10
+ no passive-interface ens19.20
+ no passive-interface ens19.60
  redistribute bgp 65000 route-map BGP_TO_OSPF
 !
 router bgp 65000
@@ -404,7 +391,7 @@ echo "[+] Настройка SNMP..."
 
 cat > /etc/snmp/snmpd.conf <<EOF
 agentAddress udp:161
-sysLocation "Moscow DC"
+sysLocation "Moscow DC (Primary)"
 sysContact admin@office.local
 
 createUser snmpuser SHA snmppass AES snmppass
@@ -445,20 +432,25 @@ cat > /usr/local/bin/ip-sla-monitor.sh <<'EOF'
 set -e
 
 TRACK_FILE="/var/run/ip-sla-track1"
-GATEWAY="77.34.140.1"
 TEST_IP="11.11.11.1"
+
+# Получаем текущий шлюз по умолчанию
+GATEWAY=$(ip route show default | awk '{print $3}')
+
+if [ -z "$GATEWAY" ]; then
+    logger -t ip-sla "No default gateway found"
+    exit 1
+fi
 
 if ping -c 3 -W 2 "$TEST_IP" &>/dev/null; then
     if [ ! -f "$TRACK_FILE" ] || [ "$(cat $TRACK_FILE)" != "1" ]; then
         echo "1" > "$TRACK_FILE"
-        logger -t ip-sla "Internet connectivity RESTORED"
-        ip route replace default via "$GATEWAY" dev ens19 2>/dev/null || true
+        logger -t ip-sla "Internet connectivity RESTORED via $GATEWAY"
     fi
 else
     if [ -f "$TRACK_FILE" ] && [ "$(cat $TRACK_FILE)" != "0" ]; then
         echo "0" > "$TRACK_FILE"
-        logger -t ip-sla "Internet connectivity LOST"
-        ip route del default via "$GATEWAY" dev ens19 2>/dev/null || true
+        logger -t ip-sla "Internet connectivity LOST via $GATEWAY"
     fi
 fi
 EOF
@@ -467,7 +459,7 @@ chmod +x /usr/local/bin/ip-sla-monitor.sh
 
 cat > /etc/systemd/system/ip-sla-monitor.service <<EOF
 [Unit]
-Description=IP SLA Monitor
+Description=IP SLA Monitor (Primary)
 After=network-online.target
 
 [Service]
@@ -477,7 +469,7 @@ EOF
 
 cat > /etc/systemd/system/ip-sla-monitor.timer <<EOF
 [Unit]
-Description=Run IP SLA Monitor every 10 seconds
+Description=Run IP SLA Monitor every 10 seconds (Primary)
 After=network-online.target
 
 [Timer]
@@ -493,31 +485,38 @@ systemctl enable --now ip-sla-monitor.timer
 ### === 12. Финальная проверка ===
 echo ""
 echo "=========================================="
-echo "✅ Конфигурация завершена!"
+echo "✅ Конфигурация основного роутера завершена!"
 echo "=========================================="
 echo ""
 echo "Интерфейсы:"
-ip -br addr show | grep -E "(ens19|ens18|gre|lo|vlan)"
+ip -br addr show | grep -E "(ens18|ens19|gre|lo|vlan)"
 echo ""
-echo "VLAN интерфейсы:"
-ip -d link show | grep -E "ens18\.[16]0" | awk '{print $2, $9}'
+echo "WAN интерфейс (DHCP):"
+ip -br addr show ens18
 echo ""
-echo "Маршруты по умолчанию:"
+echo "Маршрут по умолчанию (получен через DHCP):"
 ip route show default
 echo ""
-echo "GRE туннели:"
-ip tunnel show | grep gre || echo "Туннели ещё не подняты (ждём IPsec)"
+echo "Маршруты к локальной сети 10.100.0.0/16:"
+ip route show 10.100.0.0/16 2>/dev/null || echo "  Будет добавлен после поднятия ens19.60"
+echo ""
+echo "GRE туннели (адреса удалённых концов +1):"
+echo "  tun101 → 172.217.35.81 (MOONET +1)"
+echo "  tun102 → 178.207.179.5 (GIGAFON COD +1)"
+ip tunnel show | grep gre || echo "  Туннели ещё не подняты (ждём IPsec)"
 echo ""
 echo "Службы:"
 for svc in frr strongswan nftables chrony ssh snmpd syslog-ng ip-sla-monitor.timer; do
     systemctl is-active $svc 2>/dev/null && echo "  ✅ $svc: active" || echo "  ❌ $svc: inactive"
 done
 echo ""
-echo "Для проверки туннелей выполните через 30 сек:"
-echo "  swanctl --list-sas"
-echo "  vtysh -c 'show ip bgp summary'"
+echo "⚠️ ВАЖНО:"
+echo "   - ens18 = WAN (к провайдеру GOSTELECOM) — DHCP"
+echo "   - ens19 = LAN (к бэкбону c-msk-1-bs) — транк с VLAN 10/20/60"
+echo "   - Все внешние адреса увеличены на +1 согласно таблице провайдеров"
+echo "   - Статические маршруты к провайдерам УДАЛЕНЫ (приходят через BGP от ISP)"
 echo ""
-echo "⚠️ ВАЖНО: Убедитесь, что имена интерфейсов верны:"
-echo "   - ens19 = WAN (к провайдеру GOSTELECOM)"
-echo "   - ens18 = LAN (к фаерволу c-msk-1-fw) — настроен как транк с VLAN 10/20/60"
-echo "   Если имена отличаются — отредактируйте /etc/network/interfaces"
+echo "💡 Особенности основного роутера:"
+echo "   - BGP weight: 200 (tun101) и 100 (tun102) — выше чем у резервного"
+echo "   - IP SLA: проверка доступности 11.11.11.1 (сеть провайдера ROAMING)"
+echo "   - Адреса туннелей: 172.217.35.81 и 178.207.179.5 (+1 от таблицы)"
