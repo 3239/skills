@@ -13,7 +13,7 @@ apt update && apt upgrade -y
 
 # Установка необходимых пакетов
 apt install -y \
-  ifupdown \
+  ifupdown vlan \
   frr frr-pythontools \
   strongswan strongswan-swanctl libstrongswan-extra-plugins \
   nftables \
@@ -26,7 +26,11 @@ apt install -y \
   iproute2 iputils-ping net-tools tcpdump curl jq
 
 ### === 2. Сетевые интерфейсы через /etc/network/interfaces ===
-echo "[+] Настройка сетевых интерфейсов..."
+echo "[+] Настройка сетевых интерфейсов с поддержкой VLAN..."
+
+# Загрузка модуля 8021q для работы с VLAN
+modprobe 8021q
+echo "8021q" >> /etc/modules
 
 cat > /etc/network/interfaces <<'EOF'
 # Loopback
@@ -45,14 +49,34 @@ iface ens19 inet static
     post-up ip route add 178.207.179.24/29 via 77.34.140.1 dev ens19 || true
     post-up ip route add 12.12.12.0/24 via 77.34.140.1 dev ens19 || true
 
-# LAN — к фаерволу c-msk-1-fw (ens18)
+# LAN — к фаерволу c-msk-1-fw (ens18) с поддержкой VLAN
 auto ens18
-iface ens18 inet static
+iface ens18 inet manual
+    up ip link set $IFACE up
+    down ip link set $IFACE down
+
+# VLAN 10 — INS (Clients)
+auto ens18.10
+iface ens18.10 inet static
+    address 10.100.10.21/24
+    vlan-raw-device ens18
+
+# VLAN 20 — SRV (Servers)
+auto ens18.20
+iface ens18.20 inet static
+    address 10.100.20.21/24
+    vlan-raw-device ens18
+
+# VLAN 60 — MGMT
+auto ens18.60
+iface ens18.60 inet static
     address 10.100.60.21/24
+    vlan-raw-device ens18
 EOF
 
 # Применение конфигурации
 ifdown -a 2>/dev/null || true
+sleep 2
 ifup -a
 
 ### === 3. Включение маршрутизации ===
@@ -66,6 +90,9 @@ net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
 net.ipv4.conf.ens19.accept_redirects = 0
 net.ipv4.conf.ens18.accept_redirects = 0
+net.ipv4.conf.ens18.10.accept_redirects = 0
+net.ipv4.conf.ens18.20.accept_redirects = 0
+net.ipv4.conf.ens18.60.accept_redirects = 0
 EOF
 
 sysctl -p
@@ -79,10 +106,14 @@ cat > /etc/nftables.conf <<'EOF'
 flush ruleset
 
 define WAN_IF = "ens19"
-define LAN_IF = "ens18"
+define VLAN10_IF = "ens18.10"
+define VLAN20_IF = "ens18.20"
+define VLAN60_IF = "ens18.60"
 define DC1_NET = 10.200.0.0/16
 define DC2_NET = 10.201.0.0/16
-define LOCAL_NET = 10.100.0.0/16
+define INS_NET = 10.100.10.0/24
+define SRV_NET = 10.100.20.0/24
+define MGMT_NET = 10.100.60.0/24
 
 table inet filter {
     chain input {
@@ -98,9 +129,13 @@ table inet filter {
     chain forward {
         type filter hook forward priority 0; policy drop;
         ct state established,related accept
-        iif $LAN_IF oif $WAN_IF ip daddr != $DC1_NET, $DC2_NET accept
+        iif $VLAN10_IF oif $WAN_IF ip daddr != $DC1_NET, $DC2_NET accept
+        iif $VLAN20_IF oif $WAN_IF ip daddr != $DC1_NET, $DC2_NET accept
+        iif $VLAN60_IF oif $WAN_IF ip daddr != $DC1_NET, $DC2_NET accept
         iifname "gre*" oif $WAN_IF accept
-        iif $WAN_IF oif $LAN_IF ct state established,related accept
+        iif $WAN_IF oif $VLAN10_IF ct state established,related accept
+        iif $WAN_IF oif $VLAN20_IF ct state established,related accept
+        iif $WAN_IF oif $VLAN60_IF ct state established,related accept
         reject with icmpx admin-prohibited
     }
 
@@ -116,7 +151,9 @@ table ip nat {
 
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
-        ip saddr $LOCAL_NET ip daddr != $DC1_NET, $DC2_NET oif $WAN_IF masquerade
+        ip saddr $INS_NET ip daddr != $DC1_NET, $DC2_NET oif $WAN_IF masquerade
+        ip saddr $SRV_NET ip daddr != $DC1_NET, $DC2_NET oif $WAN_IF masquerade
+        ip saddr $MGMT_NET ip daddr != $DC1_NET, $DC2_NET oif $WAN_IF masquerade
     }
 }
 EOF
@@ -250,7 +287,15 @@ interface gre102
  ip ospf network point-to-point
  ip pim sparse-mode
 !
-interface ens18
+interface ens18.10
+ ip address 10.100.10.21/24
+ ip ospf network broadcast
+!
+interface ens18.20
+ ip address 10.100.20.21/24
+ ip ospf network broadcast
+!
+interface ens18.60
  ip address 10.100.60.21/24
  ip ospf network broadcast
 !
@@ -259,9 +304,13 @@ interface lo
 !
 router ospf
  ospf router-id 10.10.10.1
+ network 10.100.10.0/24 area 0.0.0.0
+ network 10.100.20.0/24 area 0.0.0.0
  network 10.100.60.0/24 area 0.0.0.0
  passive-interface default
- no passive-interface ens18
+ no passive-interface ens18.10
+ no passive-interface ens18.20
+ no passive-interface ens18.60
  redistribute bgp 65000 route-map BGP_TO_OSPF
 !
 router bgp 65000
@@ -432,35 +481,17 @@ EOF
 
 systemctl enable --now ip-sla-monitor.timer
 
-### === 12. Автоматическое создание туннелей при загрузке ===
-echo "[+] Настройка автозапуска туннелей..."
-
-cat > /etc/network/if-up.d/gre-tunnels <<'EOF'
-#!/bin/bash
-if [ "$IFACE" = "ens19" ]; then
-    sleep 5
-    ip tunnel add gre101 mode gre local 77.34.141.141 remote 11.11.11.2 ttl 255 2>/dev/null || true
-    ip addr add 10.10.101.1/30 dev gre101 2>/dev/null || true
-    ip link set gre101 mtu 1400
-    ip link set gre101 up
-
-    ip tunnel add gre102 mode gre local 77.34.141.141 remote 13.13.13.2 ttl 255 2>/dev/null || true
-    ip addr add 10.10.102.1/30 dev gre102 2>/dev/null || true
-    ip link set gre102 mtu 1400
-    ip link set gre102 up
-fi
-EOF
-
-chmod +x /etc/network/if-up.d/gre-tunnels
-
-### === 13. Финальная проверка ===
+### === 12. Финальная проверка ===
 echo ""
 echo "=========================================="
 echo "✅ Конфигурация завершена!"
 echo "=========================================="
 echo ""
 echo "Интерфейсы:"
-ip -br addr show | grep -E "(ens19|ens18|gre|lo)"
+ip -br addr show | grep -E "(ens19|ens18|gre|lo|vlan)"
+echo ""
+echo "VLAN интерфейсы:"
+ip -d link show | grep -E "ens18\.[16]0" | awk '{print $2, $9}'
 echo ""
 echo "Маршруты по умолчанию:"
 ip route show default
@@ -469,7 +500,9 @@ echo "GRE туннели:"
 ip tunnel show | grep gre || echo "Туннели ещё не подняты (ждём IPsec)"
 echo ""
 echo "Службы:"
-systemctl is-active frr strongswan nftables chrony ssh snmpd syslog-ng ip-sla-monitor.timer
+for svc in frr strongswan nftables chrony ssh snmpd syslog-ng ip-sla-monitor.timer; do
+    systemctl is-active $svc 2>/dev/null && echo "  ✅ $svc: active" || echo "  ❌ $svc: inactive"
+done
 echo ""
 echo "Для проверки туннелей выполните через 30 сек:"
 echo "  swanctl --list-sas"
@@ -477,5 +510,5 @@ echo "  vtysh -c 'show ip bgp summary'"
 echo ""
 echo "⚠️ ВАЖНО: Убедитесь, что имена интерфейсов верны:"
 echo "   - ens19 = WAN (к провайдеру GOSTELECOM)"
-echo "   - ens18 = LAN (к фаерволу c-msk-1-fw)"
+echo "   - ens18 = LAN (к фаерволу c-msk-1-fw) — настроен как транк с VLAN 10/20/60"
 echo "   Если имена отличаются — отредактируйте /etc/network/interfaces"
