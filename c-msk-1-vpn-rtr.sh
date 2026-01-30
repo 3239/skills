@@ -99,8 +99,6 @@ define WAN_IF = "ens18"
 define VLAN10_IF = "ens19.10"
 define VLAN20_IF = "ens19.20"
 define VLAN60_IF = "ens19.60"
-define DC1_NET = 10.200.0.0/24
-define DC2_NET = 10.201.0.0/24
 define INS_NET = 10.100.10.0/24
 define SRV_NET = 10.100.20.0/24
 define MGMT_NET = 10.100.60.0/24
@@ -119,9 +117,9 @@ table inet filter {
     chain forward {
         type filter hook forward priority 0; policy drop;
         ct state established,related accept
-        iif $VLAN10_IF oif $WAN_IF ip daddr != $DC1_NET, $DC2_NET accept
-        iif $VLAN20_IF oif $WAN_IF ip daddr != $DC1_NET, $DC2_NET accept
-        iif $VLAN60_IF oif $WAN_IF ip daddr != $DC1_NET, $DC2_NET accept
+        iif $VLAN10_IF oif $WAN_IF ip daddr != { 10.200.0.0/16, 10.201.0.0/16 } accept
+        iif $VLAN20_IF oif $WAN_IF ip daddr != { 10.200.0.0/16, 10.201.0.0/16 } accept
+        iif $VLAN60_IF oif $WAN_IF ip daddr != { 10.200.0.0/16, 10.201.0.0/16 } accept
         iifname "gre*" oif $WAN_IF accept
         iif $WAN_IF oif $VLAN10_IF ct state established,related accept
         iif $WAN_IF oif $VLAN20_IF ct state established,related accept
@@ -141,9 +139,9 @@ table ip nat {
 
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
-        ip saddr $INS_NET ip daddr != $DC1_NET, $DC2_NET oif $WAN_IF masquerade
-        ip saddr $SRV_NET ip daddr != $DC1_NET, $DC2_NET oif $WAN_IF masquerade
-        ip saddr $MGMT_NET ip daddr != $DC1_NET, $DC2_NET oif $WAN_IF masquerade
+        ip saddr $INS_NET ip daddr != { 10.200.0.0/16, 10.201.0.0/16 } oif $WAN_IF masquerade
+        ip saddr $SRV_NET ip daddr != { 10.200.0.0/16, 10.201.0.0/16 } oif $WAN_IF masquerade
+        ip saddr $MGMT_NET ip daddr != { 10.200.0.0/16, 10.201.0.0/16 } oif $WAN_IF masquerade
     }
 }
 EOF
