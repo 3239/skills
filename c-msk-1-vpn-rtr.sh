@@ -10,20 +10,21 @@ timedatectl set-timezone Europe/Moscow
 
 # Обновление системы
 apt update && apt upgrade -y
-
+sleep 10
 # Установка необходимых пакетов
 apt install -y \
   ifupdown vlan \
   frr frr-pythontools \
-  strongswan strongswan-swanctl libstrongswan-extra-plugins \
+  strongswan-starter strongswan-swanctl strongswan-libcharon \
   nftables \
   chrony \
   openssh-server \
-  snmpd snmp \
+  snmpd \
   libpam-radius-auth \
   syslog-ng \
   pimd \
   iproute2 iputils-ping net-tools tcpdump curl jq
+sleep 10
 
 ### === 2. Сетевые интерфейсы через /etc/network/interfaces ===
 echo "[+] Настройка сетевых интерфейсов (ens18=WAN/DHCP, ens19=LAN/VLAN)..."
@@ -98,8 +99,8 @@ define WAN_IF = "ens18"
 define VLAN10_IF = "ens19.10"
 define VLAN20_IF = "ens19.20"
 define VLAN60_IF = "ens19.60"
-define DC1_NET = 10.200.0.0/16
-define DC2_NET = 10.201.0.0/16
+define DC1_NET = 10.200.0.0/24
+define DC2_NET = 10.201.0.0/24
 define INS_NET = 10.100.10.0/24
 define SRV_NET = 10.100.20.0/24
 define MGMT_NET = 10.100.60.0/24
