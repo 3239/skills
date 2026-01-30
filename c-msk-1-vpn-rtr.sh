@@ -38,7 +38,9 @@ auto lo
 iface lo inet loopback
 
 auto ens18
-iface ens18 inet dhcp
+iface ens18 inet static
+    address 77.34.141.142/22
+    gateway 77.34.140.1
 
 auto ens19
 iface ens19 inet manual
